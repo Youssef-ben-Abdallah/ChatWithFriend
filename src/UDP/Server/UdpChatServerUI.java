@@ -1,32 +1,43 @@
 package UDP.Server;
 
 import UDP.Client.UdpChatClientUI;
-
 import javax.swing.*;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.net.SocketException;
 import java.util.List;
 
+/**
+ * UDP Server UI wrapper (same structure as TCP ChatServer).
+ * Uses UdpChatServerCore singleton for server logic.
+ */
 public class UdpChatServerUI extends JFrame {
+    private UdpChatServerCore serverCore;
 
     private final DefaultListModel<String> model = new DefaultListModel<>();
     private final JList<String> clientsList = new JList<>(model);
-
     private final JTextArea logArea = new JTextArea();
-
-    private final UdpChatServerCore server;
 
     public UdpChatServerUI(int port) throws SocketException {
         super("UDP Server (Port " + port + ")");
-        this.server = new UdpChatServerCore(port);
-
+        
         buildUI();
-
-        server.setOnClientsUpdate(this::updateClientsOnUI);
-        server.setOnLog(this::appendLog);
-
-        server.start();
+        
+        // Get singleton instance of server core
+        serverCore = UdpChatServerCore.getInstance();
+        
+        // Set up listeners for UI updates
+        serverCore.setOnLog(this::appendLog);
+        serverCore.setOnClientListUpdated(this::updateClientsOnUI);
+        
+        // Start server
+        if (!serverCore.start(port)) {
+            appendLog("Failed to start server - may already be running!");
+            JOptionPane.showMessageDialog(this, 
+                "Server is already running! Only one server instance is allowed.",
+                "Server Error", JOptionPane.ERROR_MESSAGE);
+            System.exit(1);
+        }
     }
 
     private void buildUI() {
@@ -82,7 +93,8 @@ public class UdpChatServerUI extends JFrame {
         String name = JOptionPane.showInputDialog(this, "Client name?");
         if (name == null || name.isBlank()) return;
 
-        SwingUtilities.invokeLater(() -> new UdpChatClientUI("127.0.0.1", server.getPort(), name).setVisible(true));
+        SwingUtilities.invokeLater(() -> 
+            new UdpChatClientUI("127.0.0.1", serverCore.getPort(), name).setVisible(true));
     }
 
     private void kickSelected() {
@@ -93,7 +105,7 @@ public class UdpChatServerUI extends JFrame {
         }
 
         String reason = JOptionPane.showInputDialog(this, "Reason (optional):", "Kicked by server");
-        boolean ok = server.kickClient(selected, reason);
+        boolean ok = serverCore.kickClient(selected, reason);
 
         if (!ok) JOptionPane.showMessageDialog(this, "Client not found (maybe already disconnected).");
     }
