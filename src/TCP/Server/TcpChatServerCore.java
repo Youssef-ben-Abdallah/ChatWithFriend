@@ -1,6 +1,5 @@
-    package TCP.Server;
+package TCP.Server;
 
-import TCP.Client.ClientHandler;
 import common.ChatServerInterface;
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -19,7 +18,7 @@ public class TcpChatServerCore implements ChatServerInterface {
     private static final Object lock = new Object();
 
     private ServerSocket serverSocket;
-    private final Set<ClientHandler> clientHandlers = ConcurrentHashMap.newKeySet();
+    private final Set<TcpClientHandler> clientHandlers = ConcurrentHashMap.newKeySet();
     private boolean running = false;
     private int port = -1;
     private Thread serverThread;
@@ -101,9 +100,8 @@ public class TcpChatServerCore implements ChatServerInterface {
                 log("Error closing server socket: " + e.getMessage());
             }
 
-            // Disconnect all clients
-            List<ClientHandler> handlers = new ArrayList<>(clientHandlers);
-            for (ClientHandler handler : handlers) {
+            List<TcpClientHandler> handlers = new ArrayList<>(clientHandlers);
+            for (TcpClientHandler handler : handlers) {
                 try {
                     handler.getSocket().close();
                 } catch (Exception ignored) {
@@ -128,7 +126,7 @@ public class TcpChatServerCore implements ChatServerInterface {
     @Override
     public List<String> getConnectedClients() {
         List<String> clients = new ArrayList<>();
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             String name = ch.getClientName();
             if (name != null) {
                 clients.add(name);
@@ -139,8 +137,8 @@ public class TcpChatServerCore implements ChatServerInterface {
 
     @Override
     public boolean kickClient(String clientName, String reason) {
-        ClientHandler toKick = null;
-        for (ClientHandler ch : clientHandlers) {
+        TcpClientHandler toKick = null;
+        for (TcpClientHandler ch : clientHandlers) {
             if (clientName.equals(ch.getClientName())) {
                 toKick = ch;
                 break;
@@ -174,14 +172,14 @@ public class TcpChatServerCore implements ChatServerInterface {
     @Override
     public void broadcastMessage(String message) {
         log(message);
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             ch.sendMessage(message);
         }
     }
 
     @Override
     public boolean sendPrivateMessage(String from, String to, String message) {
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (to.equals(ch.getClientName())) {
                 ch.sendMessage("(Private) " + from + ": " + message);
                 log("(Private) " + from + " -> " + to + ": " + message);
@@ -197,7 +195,7 @@ public class TcpChatServerCore implements ChatServerInterface {
                 Socket socket = serverSocket.accept();
                 log("New client connected: " + socket.getRemoteSocketAddress());
 
-                ClientHandler handler = new ClientHandler(socket, clientHandlers, this);
+                TcpClientHandler handler = new TcpClientHandler(socket, clientHandlers, this);
                 clientHandlers.add(handler);
                 notifyClientListUpdated();
 
@@ -225,18 +223,18 @@ public class TcpChatServerCore implements ChatServerInterface {
         notifyClientListUpdated();
     }
 
-    public void broadcast(String message, ClientHandler sender) {
+    public void broadcast(String message, TcpClientHandler sender) {
         log(message);
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (ch != sender) {
                 ch.sendMessage(message);
             }
         }
     }
 
-    public void broadcastSystem(String systemMessage, ClientHandler exclude) {
+    public void broadcastSystem(String systemMessage, TcpClientHandler exclude) {
         log(systemMessage);
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (ch != exclude) {
                 ch.sendMessage(systemMessage);
             }
@@ -245,7 +243,7 @@ public class TcpChatServerCore implements ChatServerInterface {
 
     public void sendClientList() {
         StringBuilder sb = new StringBuilder("USER_LIST:");
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             String n = ch.getClientName();
             if (n != null)
                 sb.append(n).append(",");
@@ -254,107 +252,108 @@ public class TcpChatServerCore implements ChatServerInterface {
             sb.setLength(sb.length() - 1);
         }
         String header = sb.toString();
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             ch.sendMessage(header);
         }
     }
 
     // File transfer methods (for ClientHandler compatibility)
-    public void broadcastImageAll(String senderName, String filename, byte[] img, ClientHandler sender) {
+    public void broadcastImageAll(String senderName, String filename, byte[] img, TcpClientHandler sender) {
         log(senderName + " sent an image to All: " + filename);
         String header = "IMG_ALL:" + senderName + ":" + filename + ":" + img.length;
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (ch != sender)
                 ch.sendImage(header, img);
         }
     }
 
-    public void sendPrivateImage(String target, String senderName, String filename, byte[] img, ClientHandler sender) {
+    public void sendPrivateImage(String target, String senderName, String filename, byte[] img,
+            TcpClientHandler sender) {
         String header = "IMG_TO:" + target + ":" + senderName + ":" + filename + ":" + img.length;
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (target.equals(ch.getClientName())) {
                 ch.sendImage(header, img);
                 log(senderName + " sent a private image to " + target + ": " + filename);
                 return;
             }
         }
-        sender.sendMessage("⚠️ User '" + target + "' not found.");
+        sender.sendMessage("Warning: user '" + target + "' not found.");
     }
 
-    public void broadcastPdfAll(String senderName, String filename, byte[] pdf, ClientHandler sender) {
+    public void broadcastPdfAll(String senderName, String filename, byte[] pdf, TcpClientHandler sender) {
         log(senderName + " sent a PDF to All: " + filename);
         String header = "PDF_ALL:" + senderName + ":" + filename + ":" + pdf.length;
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (ch != sender)
                 ch.sendFile(header, pdf);
         }
     }
 
-    public void sendPrivatePdf(String target, String senderName, String filename, byte[] pdf, ClientHandler sender) {
+    public void sendPrivatePdf(String target, String senderName, String filename, byte[] pdf, TcpClientHandler sender) {
         String header = "PDF_TO:" + target + ":" + senderName + ":" + filename + ":" + pdf.length;
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (target.equals(ch.getClientName())) {
                 ch.sendFile(header, pdf);
                 log(senderName + " sent a private PDF to " + target + ": " + filename);
                 return;
             }
         }
-        sender.sendMessage("⚠️ User '" + target + "' not found.");
+        sender.sendMessage("Warning: user '" + target + "' not found.");
     }
 
-    public void broadcastFileAll(String senderName, String filename, byte[] fileData, ClientHandler sender) {
+    public void broadcastFileAll(String senderName, String filename, byte[] fileData, TcpClientHandler sender) {
         log(senderName + " sent a file to All: " + filename);
         String header = "FILE_ALL:" + senderName + ":" + filename + ":" + fileData.length;
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (ch != sender)
                 ch.sendFile(header, fileData);
         }
     }
 
     public void sendPrivateFile(String target, String senderName, String filename, byte[] fileData,
-            ClientHandler sender) {
+            TcpClientHandler sender) {
         String header = "FILE_TO:" + target + ":" + senderName + ":" + filename + ":" + fileData.length;
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (target.equals(ch.getClientName())) {
                 ch.sendFile(header, fileData);
                 log(senderName + " sent a private file to " + target + ": " + filename);
                 return;
             }
         }
-        sender.sendMessage("⚠️ User '" + target + "' not found.");
+        sender.sendMessage("Warning: user '" + target + "' not found.");
     }
 
-    public void broadcastAudioAll(String senderName, String filename, byte[] audio, ClientHandler sender) {
+    public void broadcastAudioAll(String senderName, String filename, byte[] audio, TcpClientHandler sender) {
         log(senderName + " sent a voice message to All: " + filename);
         String header = "AUDIO_ALL:" + senderName + ":" + filename + ":" + audio.length;
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (ch != sender)
                 ch.sendFile(header, audio);
         }
     }
 
     public void sendPrivateAudio(String target, String senderName, String filename, byte[] audio,
-            ClientHandler sender) {
+            TcpClientHandler sender) {
         String header = "AUDIO_TO:" + target + ":" + senderName + ":" + filename + ":" + audio.length;
-        for (ClientHandler ch : clientHandlers) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (target.equals(ch.getClientName())) {
                 ch.sendFile(header, audio);
                 log(senderName + " sent a private voice message to " + target + ": " + filename);
                 return;
             }
         }
-        sender.sendMessage("⚠️ User '" + target + "' not found.");
+        sender.sendMessage("Warning: user '" + target + "' not found.");
     }
 
-    public void sendPrivateMessage(String from, String to, String msg, ClientHandler sender) {
-        for (ClientHandler ch : clientHandlers) {
+    public void sendPrivateMessage(String from, String to, String msg, TcpClientHandler sender) {
+        for (TcpClientHandler ch : clientHandlers) {
             if (to.equals(ch.getClientName())) {
                 ch.sendMessage("(Private) " + from + ": " + msg);
                 log("(Private) " + from + " -> " + to + ": " + msg);
                 return;
             }
         }
-        sender.sendMessage("⚠️ User '" + to + "' not found.");
+        sender.sendMessage("Warning: user '" + to + "' not found.");
     }
 
     private void notifyClientListUpdated() {
@@ -362,6 +361,7 @@ public class TcpChatServerCore implements ChatServerInterface {
             List<String> clients = getConnectedClients();
             onClientListUpdated.accept(clients);
         }
+        sendClientList();
     }
 
     private void log(String message) {

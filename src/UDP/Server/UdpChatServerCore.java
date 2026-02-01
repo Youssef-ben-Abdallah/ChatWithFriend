@@ -2,7 +2,10 @@ package UDP.Server;
 
 import common.ChatServerInterface;
 import java.io.IOException;
-import java.net.*;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.SocketAddress;
+import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,9 +23,8 @@ public class UdpChatServerCore implements ChatServerInterface {
     private int port = -1;
     private Thread serverThread;
 
-    // name -> address
-    private final Map<String, SocketAddress> clients = new ConcurrentHashMap<>();
-    
+    private final Map<String, UdpClientHandler> clients = new ConcurrentHashMap<>();
+
     // Listeners
     private java.util.function.Consumer<List<String>> onClientListUpdated;
     private java.util.function.Consumer<String> onLog;
@@ -98,12 +100,11 @@ public class UdpChatServerCore implements ChatServerInterface {
                 log("Error closing server socket: " + e.getMessage());
             }
 
-            // Send LEAVE to all clients
             List<String> clientNames = new ArrayList<>(clients.keySet());
             for (String name : clientNames) {
-                SocketAddress addr = clients.get(name);
-                if (addr != null) {
-                    send("KICK|SERVER|" + name + "|Server shutting down", addr);
+                UdpClientHandler handler = clients.get(name);
+                if (handler != null) {
+                    handler.send("KICK", "SERVER", name, "Server shutting down");
                 }
             }
             clients.clear();
@@ -124,19 +125,21 @@ public class UdpChatServerCore implements ChatServerInterface {
 
     @Override
     public List<String> getConnectedClients() {
-        List<String> names = new ArrayList<>(clients.keySet());
+        List<String> names = new ArrayList<>();
+        for (UdpClientHandler handler : clients.values()) {
+            names.add(handler.getClientName());
+        }
         Collections.sort(names);
         return names;
     }
 
     @Override
     public boolean kickClient(String clientName, String reason) {
-        SocketAddress addr = clients.remove(clientName);
-        if (addr == null) return false;
-
-        // Tell client to disconnect
-        send("KICK|SERVER|" + clientName + "|" + (reason == null ? "Kicked by server" : reason), addr);
-
+        UdpClientHandler handler = clients.remove(clientName);
+        if (handler == null)
+            return false;
+        String msg = reason == null ? "Kicked by server" : reason;
+        handler.send("KICK", "SERVER", clientName, msg);
         log("KICK " + clientName + (reason == null ? "" : (" - " + reason)));
         notifyClientListUpdated();
         return true;
@@ -155,18 +158,17 @@ public class UdpChatServerCore implements ChatServerInterface {
     @Override
     public void broadcastMessage(String message) {
         log(message);
-        String payload = "MSG|SERVER|*|" + message;
-        for (SocketAddress addr : clients.values()) {
-            send(payload, addr);
+        for (UdpClientHandler handler : clients.values()) {
+            handler.send("MSG", "SERVER", "*", message);
         }
     }
 
     @Override
     public boolean sendPrivateMessage(String from, String to, String message) {
-        SocketAddress targetAddr = clients.get(to);
-        if (targetAddr == null) return false;
-
-        send("MSG|" + from + "|" + to + "|" + message, targetAddr);
+        UdpClientHandler handler = clients.get(to);
+        if (handler == null)
+            return false;
+        handler.send("MSG", from, to, message);
         log("(Private) " + from + " -> " + to + ": " + message);
         return true;
     }
@@ -179,7 +181,8 @@ public class UdpChatServerCore implements ChatServerInterface {
                 DatagramPacket packet = new DatagramPacket(buf, buf.length);
                 socket.receive(packet);
 
-                String msg = new String(packet.getData(), packet.getOffset(), packet.getLength(), StandardCharsets.UTF_8);
+                String msg = new String(packet.getData(), packet.getOffset(), packet.getLength(),
+                        StandardCharsets.UTF_8);
                 handleMessage(msg, packet.getSocketAddress());
 
             } catch (IOException e) {
@@ -193,7 +196,8 @@ public class UdpChatServerCore implements ChatServerInterface {
     private void handleMessage(String raw, SocketAddress senderAddr) {
         // TYPE|FROM|TO|PAYLOAD
         String[] parts = raw.split("\\|", 4);
-        if (parts.length < 4) return;
+        if (parts.length < 4)
+            return;
 
         String type = parts[0];
         String from = parts[1];
@@ -202,8 +206,10 @@ public class UdpChatServerCore implements ChatServerInterface {
 
         switch (type) {
             case "HELLO" -> {
-                if (from == null || from.isBlank()) return;
-                clients.put(from, senderAddr);
+                if (from == null || from.isBlank())
+                    return;
+                UdpClientHandler handler = new UdpClientHandler(this, from, senderAddr);
+                clients.put(from, handler);
                 log("HELLO from " + from + " @ " + senderAddr);
                 notifyClientListUpdated();
             }
@@ -215,27 +221,30 @@ public class UdpChatServerCore implements ChatServerInterface {
 
             // forward all supported types
             case "MSG", "IMG_START", "IMG_CHUNK", "IMG_END",
-                 "FILE_START", "FILE_CHUNK", "FILE_END",
-                 "VOICE_START", "VOICE_CHUNK", "VOICE_END" ->
+                    "FILE_START", "FILE_CHUNK", "FILE_END",
+                    "VOICE_START", "VOICE_CHUNK", "VOICE_END" ->
                 forward(type, from, to, payload, senderAddr);
 
-            default -> { /* ignore */ }
+            default -> {
+                /* ignore */ }
         }
     }
 
     private void forward(String type, String from, String to, String payload, SocketAddress senderAddr) {
         if ("*".equals(to)) {
-            for (Map.Entry<String, SocketAddress> entry : clients.entrySet()) {
+            for (Map.Entry<String, UdpClientHandler> entry : clients.entrySet()) {
                 String targetName = entry.getKey();
-                if (targetName.equals(from)) continue;
-                send(type + "|" + from + "|*|" + payload, entry.getValue());
+                if (targetName.equals(from))
+                    continue;
+                UdpClientHandler handler = entry.getValue();
+                handler.send(type, from, "*", payload);
             }
         } else {
-            SocketAddress targetAddr = clients.get(to);
-            if (targetAddr != null) {
-                send(type + "|" + from + "|" + to + "|" + payload, targetAddr);
+            UdpClientHandler handler = clients.get(to);
+            if (handler != null) {
+                handler.send(type, from, to, payload);
             } else {
-                send("MSG|SERVER|" + from + "|User '" + to + "' not online.", senderAddr);
+                sendRaw("MSG|SERVER|" + from + "|User '" + to + "' not online.", senderAddr);
             }
         }
     }
@@ -245,19 +254,19 @@ public class UdpChatServerCore implements ChatServerInterface {
             List<String> clients = getConnectedClients();
             onClientListUpdated.accept(clients);
         }
-        
+
         // Also broadcast client list to all clients
         List<String> names = new ArrayList<>(this.clients.keySet());
         Collections.sort(names);
         String list = String.join(",", names);
         String payload = "CLIENTS|SERVER|*|" + list;
 
-        for (SocketAddress addr : this.clients.values()) {
-            send(payload, addr);
+        for (UdpClientHandler handler : this.clients.values()) {
+            sendRaw(payload, handler.getAddress());
         }
     }
 
-    private void send(String message, SocketAddress addr) {
+    void sendRaw(String message, SocketAddress addr) {
         try {
             byte[] data = message.getBytes(StandardCharsets.UTF_8);
             DatagramPacket packet = new DatagramPacket(data, data.length);

@@ -10,13 +10,16 @@ import java.nio.file.Files;
 import javax.sound.sampled.*;
 
 /**
- * Unified Chat Client UI that works with any ChatClientInterface implementation.
+ * Unified Chat Client UI that works with any ChatClientInterface
+ * implementation.
  * Uses dependency injection to support both TCP and UDP protocols.
  */
 public class UnifiedChatClientUI extends JFrame {
     private final ChatClientInterface client;
     private final String clientName;
-    
+    private final String serverAddress;
+    private final int serverPort;
+
     // UI Components
     private JTextPane textPane;
     private StyledDocument doc;
@@ -35,17 +38,22 @@ public class UnifiedChatClientUI extends JFrame {
     private boolean isRecording = false;
     private ByteArrayOutputStream audioOutputStream;
 
-    public UnifiedChatClientUI(ChatClientInterface client, String clientName) {
+    public UnifiedChatClientUI(ChatClientInterface client, String clientName, String serverAddress, int serverPort) {
         super("Chat Client - " + clientName);
         this.client = client;
         this.clientName = clientName;
+        this.serverAddress = serverAddress;
+        this.serverPort = serverPort;
 
         setupUI();
         setupClientListeners();
-        
-        // Auto-connect if client is ready
+
+        // Auto-connect using provided parameters
         if (!client.isConnected()) {
-            appendText("Please configure connection settings.\n");
+            boolean ok = client.connect(serverAddress, serverPort, clientName);
+            if (!ok) {
+                appendText("Connection failed. Use Reconnect to try again.\n");
+            }
         }
     }
 
@@ -73,8 +81,8 @@ public class UnifiedChatClientUI extends JFrame {
         textField = new JTextField();
         sendButton = new JButton("Send");
         attachButton = new JButton("Attach");
-        recordButton = new JButton("🎤 Record");
-        
+        recordButton = new JButton("Record");
+
         // Style record button
         recordButton.setBackground(new Color(220, 20, 60));
         recordButton.setForeground(Color.WHITE);
@@ -91,7 +99,7 @@ public class UnifiedChatClientUI extends JFrame {
         // Top bar with connection controls
         disconnectButton = new JButton("Disconnect");
         disconnectButton.addActionListener(e -> disconnect());
-        
+
         reconnectButton = new JButton("Reconnect");
         reconnectButton.addActionListener(e -> reconnect());
 
@@ -153,8 +161,9 @@ public class UnifiedChatClientUI extends JFrame {
         client.setOnClientListUpdated(clients -> {
             SwingUtilities.invokeLater(() -> {
                 String selected = userList.getSelectedValue();
-                if (selected == null) selected = "All";
-                
+                if (selected == null)
+                    selected = "All";
+
                 listModel.clear();
                 listModel.addElement("All");
                 for (String name : clients) {
@@ -162,7 +171,7 @@ public class UnifiedChatClientUI extends JFrame {
                         listModel.addElement(name);
                     }
                 }
-                
+
                 // Restore selection
                 for (int i = 0; i < listModel.size(); i++) {
                     if (listModel.get(i).equals(selected)) {
@@ -197,16 +206,18 @@ public class UnifiedChatClientUI extends JFrame {
 
     private void sendMessage() {
         if (!client.isConnected()) {
-            JOptionPane.showMessageDialog(this, "Not connected to server.", "Error", 
-                JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Not connected to server.", "Error",
+                    JOptionPane.ERROR_MESSAGE);
             return;
         }
 
         String message = textField.getText().trim();
-        if (message.isEmpty()) return;
+        if (message.isEmpty())
+            return;
 
         String target = userList.getSelectedValue();
-        if (target == null) target = "All";
+        if (target == null)
+            target = "All";
 
         client.sendMessage(message, target);
         textField.setText("");
@@ -218,18 +229,20 @@ public class UnifiedChatClientUI extends JFrame {
 
     private void chooseAndSendFile() {
         if (!client.isConnected()) {
-            JOptionPane.showMessageDialog(this, "Not connected to server.", "Error", 
-                JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Not connected to server.", "Error",
+                    JOptionPane.ERROR_MESSAGE);
             return;
         }
 
         JFileChooser chooser = new JFileChooser();
         int result = chooser.showOpenDialog(this);
-        if (result != JFileChooser.APPROVE_OPTION) return;
+        if (result != JFileChooser.APPROVE_OPTION)
+            return;
 
         File file = chooser.getSelectedFile();
         String target = userList.getSelectedValue();
-        if (target == null) target = "All";
+        if (target == null)
+            target = "All";
 
         try {
             byte[] data = Files.readAllBytes(file.toPath());
@@ -241,24 +254,25 @@ public class UnifiedChatClientUI extends JFrame {
 
             if (name.endsWith(".pdf")) {
                 client.sendFile(data, file.getName(), target);
-            } else if (name.endsWith(".jpg") || name.endsWith(".jpeg") || 
-                       name.endsWith(".png") || name.endsWith(".gif") || 
-                       name.endsWith(".bmp")) {
+            } else if (name.endsWith(".jpg") || name.endsWith(".jpeg") ||
+                    name.endsWith(".png") || name.endsWith(".gif") ||
+                    name.endsWith(".bmp")) {
                 client.sendImage(data, file.getName(), target);
-            } else if (name.endsWith(".wav") || name.endsWith(".mp3") || 
-                       name.endsWith(".ogg")) {
+            } else if (name.endsWith(".wav") || name.endsWith(".mp3") ||
+                    name.endsWith(".ogg")) {
                 client.sendAudio(data, file.getName(), target);
             } else {
                 client.sendFile(data, file.getName(), target);
             }
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "Failed to read file: " + ex.getMessage(),
-                "Error", JOptionPane.ERROR_MESSAGE);
+                    "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
     private void toggleRecording() {
-        if (!client.isConnected()) return;
+        if (!client.isConnected())
+            return;
         if (!isRecording) {
             startRecording();
         } else {
@@ -272,7 +286,7 @@ public class UnifiedChatClientUI extends JFrame {
             DataLine.Info info = new DataLine.Info(TargetDataLine.class, audioFormat);
             if (!AudioSystem.isLineSupported(info)) {
                 JOptionPane.showMessageDialog(this, "Microphone not supported or not available",
-                    "Recording Error", JOptionPane.ERROR_MESSAGE);
+                        "Recording Error", JOptionPane.ERROR_MESSAGE);
                 return;
             }
 
@@ -282,9 +296,9 @@ public class UnifiedChatClientUI extends JFrame {
 
             audioOutputStream = new ByteArrayOutputStream();
             isRecording = true;
-            recordButton.setText("⏹️ Stop");
+            recordButton.setText("Stop");
             recordButton.setBackground(new Color(50, 205, 50));
-            appendText("🎤 Recording... Click Stop to send.\n");
+            appendText("Recording... Click Stop to send.\n");
 
             new Thread(() -> {
                 try {
@@ -303,15 +317,16 @@ public class UnifiedChatClientUI extends JFrame {
 
         } catch (LineUnavailableException ex) {
             JOptionPane.showMessageDialog(this, "Unable to access microphone: " + ex.getMessage(),
-                "Recording Error", JOptionPane.ERROR_MESSAGE);
+                    "Recording Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
     private void stopRecording() {
-        if (!isRecording || targetDataLine == null) return;
+        if (!isRecording || targetDataLine == null)
+            return;
 
         isRecording = false;
-        recordButton.setText("🎤 Record");
+        recordButton.setText("Record");
         recordButton.setBackground(new Color(220, 20, 60));
 
         try {
@@ -322,26 +337,27 @@ public class UnifiedChatClientUI extends JFrame {
             audioOutputStream.close();
 
             if (rawAudioData.length == 0) {
-                appendText("🎤 No audio recorded\n");
+                appendText("No audio recorded\n");
                 return;
             }
 
             byte[] wavAudioData = convertToWav(rawAudioData);
 
             int choice = JOptionPane.showConfirmDialog(this,
-                "Recording complete (" + (wavAudioData.length / 1024) + " KB). Send voice message?",
-                "Send Voice Message", JOptionPane.YES_NO_OPTION);
+                    "Recording complete (" + (wavAudioData.length / 1024) + " KB). Send voice message?",
+                    "Send Voice Message", JOptionPane.YES_NO_OPTION);
 
             if (choice == JOptionPane.YES_OPTION) {
                 String target = userList.getSelectedValue();
-                if (target == null) target = "All";
-                
+                if (target == null)
+                    target = "All";
+
                 client.sendAudio(wavAudioData, "voice_" + System.currentTimeMillis() + ".wav", target);
                 appendText("Me sent voice message.\n");
             }
 
         } catch (Exception ex) {
-            appendText("⚠️ Error processing recording: " + ex.getMessage() + "\n");
+            appendText("Error processing recording: " + ex.getMessage() + "\n");
         } finally {
             targetDataLine = null;
             audioOutputStream = null;
@@ -354,7 +370,8 @@ public class UnifiedChatClientUI extends JFrame {
             try {
                 targetDataLine.stop();
                 targetDataLine.close();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
         targetDataLine = null;
         audioOutputStream = null;
@@ -398,9 +415,13 @@ public class UnifiedChatClientUI extends JFrame {
     }
 
     private void reconnect() {
-        // Reconnection logic depends on protocol - this would need to be handled
-        // by the caller or the protocol implementation
-        appendText("Reconnect: Please restart the client with connection details.\n");
+        if (client.isConnected()) {
+            client.disconnect();
+        }
+        boolean ok = client.connect(serverAddress, serverPort, clientName);
+        if (!ok) {
+            appendText("Reconnect failed.\n");
+        }
     }
 
     // Display methods (same as TCP client for rich display)
@@ -445,16 +466,17 @@ public class UnifiedChatClientUI extends JFrame {
     private void displayAudio(byte[] audioBytes, String sender, String filename, boolean isPrivate) {
         SwingUtilities.invokeLater(() -> {
             try {
-                String header = (isPrivate ? "(Private Audio from " : "🎤 Voice message from ") + sender + ": " + filename + " ";
+                String header = (isPrivate ? "(Private Audio from " : "Voice message from ") + sender + ": " + filename
+                        + " ";
                 doc.insertString(doc.getLength(), header, null);
 
                 JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
-                JButton playBtn = new JButton("▶️ Play");
+                JButton playBtn = new JButton("Play");
                 playBtn.setMargin(new Insets(2, 8, 2, 8));
                 playBtn.addActionListener(e -> playAudio(audioBytes, filename));
                 buttonPanel.add(playBtn);
 
-                JButton downloadBtn = new JButton("💾 Save");
+                JButton downloadBtn = new JButton("Save");
                 downloadBtn.setMargin(new Insets(2, 8, 2, 8));
                 downloadBtn.addActionListener(e -> downloadFile(audioBytes, filename));
                 buttonPanel.add(downloadBtn);
@@ -522,23 +544,31 @@ public class UnifiedChatClientUI extends JFrame {
     private boolean canOpenFile(String filename) {
         String lower = filename.toLowerCase();
         return lower.endsWith(".pdf") || lower.endsWith(".txt") ||
-               lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
-               lower.endsWith(".png") || lower.endsWith(".wav") ||
-               lower.endsWith(".mp3");
+                lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+                lower.endsWith(".png") || lower.endsWith(".wav") ||
+                lower.endsWith(".mp3");
     }
 
     private String getFileIcon(String filename) {
         String lower = filename.toLowerCase();
-        if (lower.endsWith(".pdf")) return "📄";
-        if (lower.endsWith(".txt")) return "📝";
-        if (lower.endsWith(".doc") || lower.endsWith(".docx")) return "📋";
-        if (lower.endsWith(".xls") || lower.endsWith(".xlsx")) return "📊";
-        if (lower.endsWith(".zip") || lower.endsWith(".rar")) return "📦";
-        if (lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".ogg")) return "🎵";
-        if (lower.endsWith(".mp4") || lower.endsWith(".avi")) return "🎬";
+        if (lower.endsWith(".pdf"))
+            return "[PDF]";
+        if (lower.endsWith(".txt"))
+            return "[TXT]";
+        if (lower.endsWith(".doc") || lower.endsWith(".docx"))
+            return "[DOC]";
+        if (lower.endsWith(".xls") || lower.endsWith(".xlsx"))
+            return "[XLS]";
+        if (lower.endsWith(".zip") || lower.endsWith(".rar"))
+            return "[ZIP]";
+        if (lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".ogg"))
+            return "[AUDIO]";
+        if (lower.endsWith(".mp4") || lower.endsWith(".avi"))
+            return "[VIDEO]";
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
-            lower.endsWith(".png") || lower.endsWith(".gif")) return "🖼️";
-        return "📎";
+                lower.endsWith(".png") || lower.endsWith(".gif"))
+            return "[IMAGE]";
+        return "[FILE]";
     }
 
     private void openFile(byte[] fileBytes, String filename) {
@@ -553,13 +583,13 @@ public class UnifiedChatClientUI extends JFrame {
                     desktop.open(temp);
                 } else {
                     JOptionPane.showMessageDialog(this,
-                        "Cannot open file automatically. File saved to: " + temp.getAbsolutePath(),
-                        "File Saved", JOptionPane.INFORMATION_MESSAGE);
+                            "Cannot open file automatically. File saved to: " + temp.getAbsolutePath(),
+                            "File Saved", JOptionPane.INFORMATION_MESSAGE);
                 }
             }
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "Failed to open file: " + ex.getMessage(),
-                "Error", JOptionPane.ERROR_MESSAGE);
+                    "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -574,11 +604,11 @@ public class UnifiedChatClientUI extends JFrame {
             try {
                 Files.write(fileToSave.toPath(), fileBytes);
                 JOptionPane.showMessageDialog(this,
-                    "File saved successfully to:\n" + fileToSave.getAbsolutePath(),
-                    "Download Complete", JOptionPane.INFORMATION_MESSAGE);
+                        "File saved successfully to:\n" + fileToSave.getAbsolutePath(),
+                        "Download Complete", JOptionPane.INFORMATION_MESSAGE);
             } catch (IOException ex) {
                 JOptionPane.showMessageDialog(this, "Failed to save file: " + ex.getMessage(),
-                    "Error", JOptionPane.ERROR_MESSAGE);
+                        "Error", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
@@ -610,8 +640,8 @@ public class UnifiedChatClientUI extends JFrame {
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> {
                     JOptionPane.showMessageDialog(this,
-                        "Unable to play audio: " + ex.getMessage(),
-                        "Playback Error", JOptionPane.ERROR_MESSAGE);
+                            "Unable to play audio: " + ex.getMessage(),
+                            "Playback Error", JOptionPane.ERROR_MESSAGE);
                 });
             }
         }).start();
@@ -621,18 +651,19 @@ public class UnifiedChatClientUI extends JFrame {
         try {
             if (filename.toLowerCase().endsWith(".wav") && audioBytes.length >= 44) {
                 int sampleRate = ((audioBytes[24] & 0xFF) |
-                    ((audioBytes[25] & 0xFF) << 8) |
-                    ((audioBytes[26] & 0xFF) << 16) |
-                    ((audioBytes[27] & 0xFF) << 24));
+                        ((audioBytes[25] & 0xFF) << 8) |
+                        ((audioBytes[26] & 0xFF) << 16) |
+                        ((audioBytes[27] & 0xFF) << 24));
                 int dataSize = ((audioBytes[40] & 0xFF) |
-                    ((audioBytes[41] & 0xFF) << 8) |
-                    ((audioBytes[42] & 0xFF) << 16) |
-                    ((audioBytes[43] & 0xFF) << 24));
+                        ((audioBytes[41] & 0xFF) << 8) |
+                        ((audioBytes[42] & 0xFF) << 16) |
+                        ((audioBytes[43] & 0xFF) << 24));
                 if (sampleRate > 0) {
                     return dataSize / (sampleRate * 2.0);
                 }
             }
-        } catch (Exception e) {}
+        } catch (Exception e) {
+        }
         return audioBytes.length / 32000.0;
     }
 }

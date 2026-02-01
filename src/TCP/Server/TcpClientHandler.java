@@ -1,19 +1,24 @@
-package TCP.Client;
-import java.io.*;
+package TCP.Server;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.EOFException;
+import java.io.IOException;
 import java.net.Socket;
 import java.util.Set;
 
-import TCP.Server.TcpChatServerCore;
-
-public class ClientHandler implements Runnable {
+public class TcpClientHandler implements Runnable {
     private final Socket socket;
     private final DataInputStream in;
     private final DataOutputStream out;
-    private final Set<ClientHandler> clientHandlers;
+    private final Set<TcpClientHandler> clientHandlers;
     private String clientName;
     private final TcpChatServerCore serverCore;
 
-    public ClientHandler(Socket socket, Set<ClientHandler> clientHandlers, TcpChatServerCore serverCore) throws IOException {
+    public TcpClientHandler(Socket socket, Set<TcpClientHandler> clientHandlers, TcpChatServerCore serverCore)
+            throws IOException {
         this.socket = socket;
         this.clientHandlers = clientHandlers;
         this.serverCore = serverCore;
@@ -41,15 +46,14 @@ public class ClientHandler implements Runnable {
 
                 if (header.startsWith("MSG_ALL:")) {
                     String msg = header.substring("MSG_ALL:".length());
-                    if (serverCore != null) serverCore.broadcast(clientName + ": " + msg, this);
-                }
-                else if (header.startsWith("MSG_TO:")) {
+                    if (serverCore != null)
+                        serverCore.broadcast(clientName + ": " + msg, this);
+                } else if (header.startsWith("MSG_TO:")) {
                     String[] parts = header.split(":", 3);
                     if (parts.length == 3 && serverCore != null) {
                         serverCore.sendPrivateMessage(clientName, parts[1], parts[2], this);
                     }
-                }
-                else if (header.startsWith("IMG_ALL:")) {
+                } else if (header.startsWith("IMG_ALL:")) {
                     String[] parts = header.split(":", 4);
                     if (parts.length >= 4 && serverCore != null) {
                         try {
@@ -58,11 +62,9 @@ public class ClientHandler implements Runnable {
                             in.readFully(img);
                             serverCore.broadcastImageAll(parts[1], parts[2], img, this);
                         } catch (NumberFormatException e) {
-                            // Error logged by server core
                         }
                     }
-                }
-                else if (header.startsWith("IMG_TO:")) {
+                } else if (header.startsWith("IMG_TO:")) {
                     String[] parts = header.split(":", 5);
                     if (parts.length >= 5 && serverCore != null) {
                         try {
@@ -71,11 +73,9 @@ public class ClientHandler implements Runnable {
                             in.readFully(img);
                             serverCore.sendPrivateImage(parts[1], parts[2], parts[3], img, this);
                         } catch (NumberFormatException e) {
-                            // Error logged by server core
                         }
                     }
-                }
-                else if (header.startsWith("PDF_ALL:")) {
+                } else if (header.startsWith("PDF_ALL:")) {
                     String[] parts = header.split(":", 4);
                     if (parts.length >= 4 && serverCore != null) {
                         try {
@@ -84,11 +84,9 @@ public class ClientHandler implements Runnable {
                             in.readFully(pdf);
                             serverCore.broadcastPdfAll(parts[1], parts[2], pdf, this);
                         } catch (NumberFormatException e) {
-                            // Error logged by server core
                         }
                     }
-                }
-                else if (header.startsWith("PDF_TO:")) {
+                } else if (header.startsWith("PDF_TO:")) {
                     String[] parts = header.split(":", 5);
                     if (parts.length >= 5 && serverCore != null) {
                         try {
@@ -97,11 +95,9 @@ public class ClientHandler implements Runnable {
                             in.readFully(pdf);
                             serverCore.sendPrivatePdf(parts[1], parts[2], parts[3], pdf, this);
                         } catch (NumberFormatException e) {
-                            // Error logged by server core
                         }
                     }
-                }
-                else if (header.startsWith("FILE_ALL:")) {
+                } else if (header.startsWith("FILE_ALL:")) {
                     String[] parts = header.split(":", 4);
                     if (parts.length >= 4 && serverCore != null) {
                         try {
@@ -110,11 +106,9 @@ public class ClientHandler implements Runnable {
                             in.readFully(fileData);
                             serverCore.broadcastFileAll(parts[1], parts[2], fileData, this);
                         } catch (NumberFormatException e) {
-                            // Error logged by server core
                         }
                     }
-                }
-                else if (header.startsWith("FILE_TO:")) {
+                } else if (header.startsWith("FILE_TO:")) {
                     String[] parts = header.split(":", 5);
                     if (parts.length >= 5 && serverCore != null) {
                         try {
@@ -123,11 +117,9 @@ public class ClientHandler implements Runnable {
                             in.readFully(fileData);
                             serverCore.sendPrivateFile(parts[1], parts[2], parts[3], fileData, this);
                         } catch (NumberFormatException e) {
-                            // Error logged by server core
                         }
                     }
-                }
-                else if (header.startsWith("AUDIO_ALL:")) {
+                } else if (header.startsWith("AUDIO_ALL:")) {
                     String[] parts = header.split(":", 4);
                     if (parts.length >= 4 && serverCore != null) {
                         try {
@@ -136,11 +128,9 @@ public class ClientHandler implements Runnable {
                             in.readFully(audio);
                             serverCore.broadcastAudioAll(parts[1], parts[2], audio, this);
                         } catch (NumberFormatException e) {
-                            // Error logged by server core
                         }
                     }
-                }
-                else if (header.startsWith("AUDIO_TO:")) {
+                } else if (header.startsWith("AUDIO_TO:")) {
                     String[] parts = header.split(":", 5);
                     if (parts.length >= 5 && serverCore != null) {
                         try {
@@ -149,22 +139,20 @@ public class ClientHandler implements Runnable {
                             in.readFully(audio);
                             serverCore.sendPrivateAudio(parts[1], parts[2], parts[3], audio, this);
                         } catch (NumberFormatException e) {
-                            // Error logged by server core
                         }
                     }
                 }
             }
 
         } catch (EOFException ignored) {
-            // Connection closed normally
         } catch (IOException e) {
-            // Connection error
         } finally {
             try {
                 if (socket != null && !socket.isClosed()) {
                     socket.close();
                 }
-            } catch (IOException ignored) {}
+            } catch (IOException ignored) {
+            }
             clientHandlers.remove(this);
             if (clientName != null && serverCore != null) {
                 serverCore.onClientDisconnected(clientName);
@@ -207,7 +195,7 @@ public class ClientHandler implements Runnable {
     public String getClientName() {
         return clientName;
     }
-    
+
     public Socket getSocket() {
         return socket;
     }
