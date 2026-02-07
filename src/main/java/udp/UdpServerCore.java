@@ -1,11 +1,14 @@
 package udp;
 
+import core.audio.VoiceFormat;
+import core.net.ChatClientListener;
 import core.net.LogSink;
 import core.net.ServerControlApi;
 import core.net.ServerControlListener;
 
 import java.net.*;
 import java.util.*;
+import java.util.Base64;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -27,12 +30,14 @@ public final class UdpServerCore implements ServerControlApi {
     private final LogSink log;
 
     private volatile ServerControlListener listener;
+    private volatile ChatClientListener chatListener;
 
     private DatagramSocket socket;
     private Thread rxThread;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     private final Map<String, SocketAddress> clients = new ConcurrentHashMap<>();
+    private final UdpReassembler reassembler = new UdpReassembler();
 
     public UdpServerCore(int port, LogSink log) {
         this.port = port;
@@ -41,6 +46,10 @@ public final class UdpServerCore implements ServerControlApi {
 
     @Override public void setListener(ServerControlListener listener) {
         this.listener = listener;
+    }
+
+    public void setChatListener(ChatClientListener chatListener) {
+        this.chatListener = chatListener;
     }
 
     @Override public void start() throws Exception {
@@ -106,6 +115,7 @@ public final class UdpServerCore implements ServerControlApi {
                     }
                     case "MSG", "BIN_START", "BIN_CHUNK", "BIN_END", "VOICE_START", "VOICE_CHUNK", "VOICE_END" -> {
                         forward(msg, from, to);
+                        notifyChat(type, from, to, payload);
                     }
                     default -> { /* ignore */ }
                 }
@@ -142,6 +152,38 @@ public final class UdpServerCore implements ServerControlApi {
         if (l != null) {
             try { l.onClientsChanged(names); } catch (Exception ignored) {}
         }
+    }
+
+    private void notifyChat(String type, String from, String to, String payload) {
+        ChatClientListener l = chatListener;
+        if (l == null) return;
+
+        try {
+            switch (type) {
+                case "MSG" -> l.onText(from, to, payload);
+                case "BIN_START" -> reassembler.onBinStart(from, to, payload);
+                case "BIN_CHUNK" -> reassembler.onBinChunk(payload);
+                case "BIN_END" -> {
+                    UdpReassembler.Incoming in = reassembler.onBinEnd(payload);
+                    if (in == null) return;
+                    if (!in.complete()) {
+                        l.onText("SERVER", from, "Binary transfer missing chunks (UDP loss). Ask sender to resend.");
+                        return;
+                    }
+                    l.onBinary(in.kind, in.from, in.to, in.name, in.join());
+                }
+                case "VOICE_START" -> l.onVoiceStart(from, to, VoiceFormat.pcm());
+                case "VOICE_CHUNK" -> {
+                    String[] p = payload.split(";", 3);
+                    if (p.length < 3) return;
+                    byte[] chunk = Base64.getDecoder().decode(p[2]);
+                    l.onVoiceChunk(from, to, chunk);
+                }
+                case "VOICE_END" -> l.onVoiceEnd(from, to);
+                default -> {
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     private void sendTo(String name, String msg) throws Exception {

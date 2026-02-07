@@ -1,6 +1,7 @@
 package tcp;
 
 import core.model.BinaryKind;
+import core.net.ChatClientListener;
 import core.net.LogSink;
 import core.net.ServerControlApi;
 import core.net.ServerControlListener;
@@ -9,6 +10,7 @@ import core.util.IOUtil;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import javax.sound.sampled.AudioFormat;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,6 +37,7 @@ public final class TcpServerCore implements ServerControlApi {
     private final LogSink log;
 
     private volatile ServerControlListener listener;
+    private volatile ChatClientListener chatListener;
 
     private ServerSocket serverSocket;
     private Thread acceptThread;
@@ -56,6 +59,10 @@ public final class TcpServerCore implements ServerControlApi {
 
     @Override public void setListener(ServerControlListener listener) {
         this.listener = listener;
+    }
+
+    public void setChatListener(ChatClientListener chatListener) {
+        this.chatListener = chatListener;
     }
 
     @Override public void start() throws Exception {
@@ -142,6 +149,7 @@ public final class TcpServerCore implements ServerControlApi {
                     String[] p = header.split(":", 4);
                     if (p.length != 4) continue;
                     routeText(p[1], p[2], p[3]);
+                    notifyText(p[1], p[2], p[3]);
                     continue;
                 }
 
@@ -158,14 +166,25 @@ public final class TcpServerCore implements ServerControlApi {
 
                     byte[] bytes = TcpWire.readBytes(in, size);
                     routeBinary(kind, from, to, fileName, bytes);
+                    notifyBinary(kind, from, to, fileName, bytes);
                     continue;
                 }
 
                 if (header.startsWith("VOICE_START:")) {
-                    // forward header as-is (clients parse format themselves)
-                    String[] p = header.split(":", 4);
-                    if (p.length < 3) continue;
-                    routeHeader(header, p[2]);
+                    // VOICE_START:<from>:<to>:<sr>:<ch>:<bits>:<bigEndian>:<signed>
+                    String[] p = header.split(":", 8);
+                    if (p.length != 8) continue;
+                    String from = p[1];
+                    String to = p[2];
+                    try {
+                        float sr = Float.parseFloat(p[3]);
+                        int ch = Integer.parseInt(p[4]);
+                        int bits = Integer.parseInt(p[5]);
+                        boolean bigEndian = Boolean.parseBoolean(p[6]);
+                        boolean signed = Boolean.parseBoolean(p[7]);
+                        notifyVoiceStart(from, to, new AudioFormat(sr, bits, ch, signed, bigEndian));
+                    } catch (Exception ignored) {}
+                    routeHeader(header, to);
                     continue;
                 }
 
@@ -179,6 +198,7 @@ public final class TcpServerCore implements ServerControlApi {
 
                     byte[] bytes = TcpWire.readBytes(in, size);
                     routeVoiceChunk(from, to, bytes);
+                    notifyVoiceChunk(from, to, bytes);
                     continue;
                 }
 
@@ -187,6 +207,7 @@ public final class TcpServerCore implements ServerControlApi {
                     String[] p = header.split(":", 3);
                     if (p.length != 3) continue;
                     routeHeader(header, p[2]);
+                    notifyVoiceEnd(p[1], p[2]);
                     continue;
                 }
 
@@ -275,6 +296,41 @@ public final class TcpServerCore implements ServerControlApi {
         ServerControlListener l = listener;
         if (l != null) {
             try { l.onClientsChanged(names); } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyText(String from, String to, String message) {
+        ChatClientListener l = chatListener;
+        if (l != null) {
+            try { l.onText(from, to, message); } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyBinary(BinaryKind kind, String from, String to, String fileName, byte[] bytes) {
+        ChatClientListener l = chatListener;
+        if (l != null) {
+            try { l.onBinary(kind, from, to, fileName, bytes); } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyVoiceStart(String from, String to, AudioFormat format) {
+        ChatClientListener l = chatListener;
+        if (l != null) {
+            try { l.onVoiceStart(from, to, format); } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyVoiceChunk(String from, String to, byte[] bytes) {
+        ChatClientListener l = chatListener;
+        if (l != null) {
+            try { l.onVoiceChunk(from, to, bytes); } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyVoiceEnd(String from, String to) {
+        ChatClientListener l = chatListener;
+        if (l != null) {
+            try { l.onVoiceEnd(from, to); } catch (Exception ignored) {}
         }
     }
 
