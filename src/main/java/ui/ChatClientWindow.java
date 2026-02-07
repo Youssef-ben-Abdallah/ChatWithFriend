@@ -274,6 +274,44 @@ public final class ChatClientWindow extends JFrame implements ChatClientListener
         if (!client.isConnected()) throw new IllegalStateException("Not connected");
     }
 
+    // ===== Server monitor helpers =====
+
+    public void addServerNote(String message) {
+        chat.addText("[Server] " + message);
+    }
+
+    public void addServerText(String line) {
+        chat.addText("[Server] " + line);
+    }
+
+    public void addServerBinary(BinaryKind kind, String from, String to, String fileName, byte[] bytes) {
+        String label = "[Server] " + from + " -> " + readableTo(to);
+        if (kind == BinaryKind.IMAGE) {
+            chat.addImage(label + " (image): " + fileName, new ImageIcon(bytes));
+        } else {
+            chat.addFileAttachment(label + " (file):", fileName, bytes);
+        }
+    }
+
+    public void addServerVoiceStart(String from, String to, AudioFormat format) {
+        String key = "server:" + from + "->" + to;
+        voices.put(key, new VoiceAccumulator(format));
+        chat.addText("[Server] Incoming voice from " + from + "...");
+    }
+
+    public void addServerVoiceChunk(String from, String to, byte[] pcmChunk) {
+        String key = "server:" + from + "->" + to;
+        VoiceAccumulator acc = voices.computeIfAbsent(key, k -> new VoiceAccumulator(VoiceFormat.pcm()));
+        acc.add(pcmChunk);
+    }
+
+    public void addServerVoiceEnd(String from, String to) {
+        String key = "server:" + from + "->" + to;
+        VoiceAccumulator acc = voices.remove(key);
+        if (acc == null) return;
+        chat.addVoice("[Server] " + from + " (voice):", acc.format(), acc.bytes());
+    }
+
     // ===== Listener callbacks from cores =====
 
     @Override public void onUserList(List<String> users) {
