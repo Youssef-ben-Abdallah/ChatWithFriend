@@ -1,29 +1,33 @@
 package ui;
 
-import core.net.ServerControlListener;
 import core.net.ChatClientListener;
+import core.net.ServerControlListener;
 import core.model.BinaryKind;
 import udp.UdpClientCore;
 import udp.UdpServerCore;
+import ui.chat.ChatPane;
+import ui.chat.VoiceAccumulator;
 import ui.server.ServerDashboard;
 
 import javax.swing.*;
+import javax.sound.sampled.AudioFormat;
 import java.awt.*;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.List;
-import javax.sound.sampled.AudioFormat;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** UDP mode screen: server dashboard + live log + create clients. */
 public final class UdpModePanel extends ModePanel {
 
     private final JTextArea logArea = new JTextArea();
     private final UiLogSink log = new UiLogSink(logArea);
+    private final ChatPane serverChat = new ChatPane();
 
     private final ServerDashboard dashboard = new ServerDashboard();
 
     private UdpServerCore server;
-    private ChatClientWindow serverChat;
     private final List<ChatClientWindow> clients = new ArrayList<>();
 
     private int serverPort = 12346;
@@ -48,9 +52,13 @@ public final class UdpModePanel extends ModePanel {
         stopServer.addActionListener(e -> onStopServer());
         createClient.addActionListener(e -> onCreateClient());
 
+        JTabbedPane detailTabs = new JTabbedPane();
+        detailTabs.addTab("Server Chat", serverChat);
+        detailTabs.addTab("Logs", new JScrollPane(logArea));
+
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
                 dashboard,
-                new JScrollPane(logArea));
+                detailTabs);
         split.setResizeWeight(0.25);
 
         add(actions, BorderLayout.NORTH);
@@ -70,7 +78,6 @@ public final class UdpModePanel extends ModePanel {
         try { serverPort = Integer.parseInt(portStr.trim()); }
         catch (Exception e) { log.log("[UDP] Invalid port."); return; }
 
-        serverChat = new ChatClientWindow("UDP Server Monitor");
         server = new UdpServerCore(serverPort, log);
         server.setListener(new ServerControlListener() {
             @Override public void onClientsChanged(List<String> names) {
@@ -83,16 +90,11 @@ public final class UdpModePanel extends ModePanel {
             server.start();
             dashboard.bind(server);
             dashboard.setRunning(true);
-            serverChat.setVisible(true);
-            serverChat.addServerNote("Server listening on port " + serverPort);
+            serverChat.addText("[Server] Listening on port " + serverPort);
         } catch (Exception e) {
             log.log("[UDP] Start failed: " + e.getMessage());
             server = null;
             dashboard.bind(null);
-            if (serverChat != null) {
-                serverChat.dispose();
-                serverChat = null;
-            }
         }
     }
 
@@ -102,10 +104,7 @@ public final class UdpModePanel extends ModePanel {
         server = null;
         dashboard.bind(null);
         log.log("[UDP] Server stopped.");
-        if (serverChat != null) {
-            serverChat.dispose();
-            serverChat = null;
-        }
+        serverChat.addText("[Server] Stopped.");
     }
 
     private void onCreateClient() {
@@ -145,10 +144,11 @@ public final class UdpModePanel extends ModePanel {
     }
 
     private static final class ServerChatListener implements ChatClientListener {
-        private final ChatClientWindow window;
+        private final ChatPane chat;
+        private final Map<String, VoiceAccumulator> voices = new ConcurrentHashMap<>();
 
-        private ServerChatListener(ChatClientWindow window) {
-            this.window = window;
+        private ServerChatListener(ChatPane chat) {
+            this.chat = chat;
         }
 
         @Override public void onUserList(List<String> users) {
@@ -156,23 +156,39 @@ public final class UdpModePanel extends ModePanel {
         }
 
         @Override public void onText(String from, String to, String message) {
-            window.addServerText(from + " -> " + readableTo(to) + ": " + message);
+            chat.addText("[Server] " + from + " -> " + readableTo(to) + ": " + message);
         }
 
         @Override public void onBinary(BinaryKind kind, String from, String to, String fileName, byte[] bytes) {
-            window.addServerBinary(kind, from, to, fileName, bytes);
+            String label = "[Server] " + from + " -> " + readableTo(to);
+            if (kind == BinaryKind.IMAGE) {
+                chat.addImage(label + " (image): " + fileName, new ImageIcon(bytes));
+            } else {
+                chat.addFileAttachment(label + " (file):", fileName, bytes);
+            }
         }
 
         @Override public void onVoiceStart(String from, String to, AudioFormat format) {
-            window.addServerVoiceStart(from, to, format);
+            String key = from + "->" + to;
+            voices.put(key, new VoiceAccumulator(format));
+            chat.addText("[Server] Incoming voice from " + from + "...");
         }
 
         @Override public void onVoiceChunk(String from, String to, byte[] pcmChunk) {
-            window.addServerVoiceChunk(from, to, pcmChunk);
+            String key = from + "->" + to;
+            VoiceAccumulator acc = voices.computeIfAbsent(key, k -> new VoiceAccumulator(formatFallback()));
+            acc.add(pcmChunk);
         }
 
         @Override public void onVoiceEnd(String from, String to) {
-            window.addServerVoiceEnd(from, to);
+            String key = from + "->" + to;
+            VoiceAccumulator acc = voices.remove(key);
+            if (acc == null) return;
+            chat.addVoice("[Server] " + from + " (voice):", acc.format(), acc.bytes());
+        }
+
+        private static AudioFormat formatFallback() {
+            return core.audio.VoiceFormat.pcm();
         }
 
         private static String readableTo(String to) {
